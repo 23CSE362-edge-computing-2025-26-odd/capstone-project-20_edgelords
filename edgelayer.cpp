@@ -3,6 +3,7 @@
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 
 // ====== Pin Configs (AI-Thinker ESP32-CAM default) ======
 #define PWDN_GPIO_NUM     32
@@ -41,7 +42,7 @@ const char* ssid = "YOUR_WIFI";
 const char* password = "YOUR_PASS";
 
 // Cloud endpoint (Flask / Firebase / etc.)
-String serverUrl = "http://<YOUR_SERVER>/predict";
+String serverUrl = "https://bvcantcode-edgelords.hf.space/predict";
 
 // --------------------- Camera Init ---------------------
 void initCamera() {
@@ -136,9 +137,11 @@ String sendFrameToServer(camera_fb_t * fb) {
     Serial.println("WiFi not connected.");
     return "FORWARD"; // fallback
   }
+  WiFiClientSecure client;
+  client.setInsecure();
 
   HTTPClient http;
-  http.begin(serverUrl);
+  http.begin(client, serverUrl);  
   http.addHeader("Content-Type", "image/jpeg");
   
   int httpResponseCode = http.POST(fb->buf, fb->len);

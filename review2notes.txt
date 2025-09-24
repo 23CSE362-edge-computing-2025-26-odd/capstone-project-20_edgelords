@@ -1,0 +1,4 @@
+what needs to be modified for different cars (parameters)
+bmengine
+explain lane changing vs braking with regards to safety features 
+communication protocol for actual cars

@@ -1,0 +1,10 @@
+what needs to be modified for different cars (parameters)
+bmengine
+explain lane changing vs braking with regards to safety features 
+communication protocol for actual cars
+dataset? simulator?
+
+algorithms: explain how its used; why it is a good fit for a particular problem, 
+metrics- compare to alternatives(popular ones atleast), blah blah
+
+

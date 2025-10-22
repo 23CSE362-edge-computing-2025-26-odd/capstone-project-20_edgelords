@@ -1,0 +1,188 @@
+/*
+* --------------------------------------------------------------
+* FUZZY DISTANCE CONTROLLER + LED SIMULATION (ESP32)
+* --------------------------------------------------------------
+* ** COMPUTATIONAL LOGIC IS IDENTICAL TO PROVIDED PYTHON MODEL **
+* * LED connected between:
+* LED_PIN (G0) and GND (With a current-limiting resistor)
+* * Behavior (Simulated with Software PWM/Blinking):
+* GO         → LED blinks FAST (Simulates full forward)
+* SLOW DOWN  → LED blinks SLOW (Simulates coasting)
+* STOP       → LED OFF         (Simulates plug braking)
+*
+* Distance sensor: HC-SR04
+* --------------------------------------------------------------
+*
+* SERIAL PLOTTER SETUP:
+* 1. Upload this sketch.
+* 2. Open Tools -> Serial Plotter (ensure baud rate is 115200).
+* 3. The plotter will show 3 lines:
+* - Blue Line: Distance (cm)
+* - Red Line: Action Score (0.0 - 1.0)
+* - Green Line: Total Cycle Time (s) - Should be relatively constant around 0.1s
+* --------------------------------------------------------------
+*/
+
+#include <math.h> // Ensure access to the exp() function
+
+#define TRIG_PIN 5
+#define ECHO_PIN 18
+#define LED_PIN 0 // G0, repurposed from MOTOR_NEG
+
+// ---------- LED/Software PWM Parameters ----------
+const int BLINK_RATE_GO = 1;       // Blink Cycle Delay (ms) for GO (fastest flicker)
+const int BLINK_RATE_SLOW = 50;    // ADJUSTED: Slower flicker/dimmer (was 15)
+const int BLINK_DURATION = 100;    // ADJUSTED: Increased duration for better visibility (was 50)
+
+// ---------- Fuzzy Parameters (Matches Python's self.transitions) ----------
+// Very Close (vc)
+float vc_center = 10, vc_steep = 0.3; 
+// Close (c)
+float c_center  = 40, c_steep  = 0.2;
+// Far (f)
+float f_center  = 60, f_steep  = 0.15;
+// Very Far (vf)
+float vf_center = 100, vf_steep = 0.1;
+
+// ******************************************************
+//             FUZZY LOGIC IMPLEMENTATION
+// ******************************************************
+
+// ---------- Sigmoid Function (Matches Python's smooth_sigmoid) ----------
+float smoothSigmoid(float x, float center, float steepness, bool decreasing) {
+  if (decreasing)
+    return 1.0 / (1.0 + exp(steepness * (x - center)));
+  else
+    return 1.0 / (1.0 + exp(-steepness * (x - center)));
+}
+
+// ---------- Fuzzy Memberships (Matches Python's calculate_memberships) ----------
+void calculateMemberships(float distance, float &vc, float &c, float &f, float &vf) {
+  vc = smoothSigmoid(distance, vc_center, vc_steep, true); 
+  c  = smoothSigmoid(distance, c_center,  c_steep,  true);  
+  f  = smoothSigmoid(distance, f_center,  f_steep,  false); 
+  vf = smoothSigmoid(distance, vf_center, vf_steep, false);
+}
+
+// ---------- Score Calculation (Matches Python's calculate_score) ----------
+float calculateScore(float distance) {
+  float vc, c, f, vf;
+  calculateMemberships(distance, vc, c, f, vf);
+
+  float stopInfluence = vc;
+  float slowInfluence = (c * 0.8 + vc * 0.2); 
+  float goInfluence   = (f * 0.4 + vf * 0.6); 
+
+  float total = stopInfluence + slowInfluence + goInfluence;
+  
+  if (total == 0) return 0.5; 
+
+  float baseScore = (stopInfluence * 1.0 +           
+                     slowInfluence * 0.5 +           
+                     goInfluence * 0.1) / total;    
+                     
+  float finalScore = 1.0 / (1.0 + exp(-8 * (baseScore - 0.5)));
+
+  return finalScore;
+}
+
+// ---------- Decide Action (Matches Python's get_action) ----------
+String getAction(float distance, float &score) {
+  score = calculateScore(distance);
+  
+  if (score >= 0.6) return "STOP";
+  else if (score >= 0.3) return "SLOW DOWN";
+  else return "GO";
+}
+
+// ******************************************************
+//             HARDWARE CONTROL FUNCTIONS
+// ******************************************************
+
+// ---------- Distance Measurement (Unchanged) ----------
+float getDistance() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000); 
+  if (duration == 0) return 999; 
+
+  float distance = duration * 0.0343 / 2.0; 
+  return distance;
+}
+
+// ---------- LED Control (Software PWM/Blinking) ----------
+void setLEDAction(String action) {
+  int blinkDelay;
+  
+  if (action == "GO") {
+    blinkDelay = BLINK_RATE_GO; 
+  } 
+  else if (action == "SLOW DOWN") {
+    blinkDelay = BLINK_RATE_SLOW;
+  } 
+  else if (action == "STOP") {
+    digitalWrite(LED_PIN, LOW);
+    return; 
+  }
+  
+  for (int i = 0; i < BLINK_DURATION / blinkDelay; i++) {
+    digitalWrite(LED_PIN, HIGH);
+    delay(blinkDelay);
+    digitalWrite(LED_PIN, LOW);
+    delay(blinkDelay);
+  }
+  digitalWrite(LED_PIN, LOW);
+}
+
+// ---------- Setup (Simplified) ----------
+void setup() {
+  Serial.begin(115200);
+  
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  pinMode(LED_PIN, OUTPUT); 
+  digitalWrite(LED_PIN, LOW); 
+
+  Serial.println("\nFuzzy Distance Controller - Serial Plotter Mode");
+  Serial.println("----------------------------------------------");
+  // Print a simple header for the standard Serial Monitor that doubles as a legend for the Serial Plotter
+  Serial.println("Distance,Score,TotalCycleTime,Mode");
+  Serial.println("----------------------------------------------");
+}
+
+// ---------- Main Loop (Serial Plotter Compatible) ----------
+void loop() {
+  unsigned long loop_start = micros();
+  
+  // 1. Sensor Measurement
+  float distance = getDistance();
+  
+  // 2. Fuzzy Logic Processing
+  float score;
+  String action = getAction(distance, score);
+  
+  // 3. Action (LED Simulation)
+  setLEDAction(action); 
+  unsigned long action_end = micros();
+
+  // --- Calculate Total Cycle Time ---
+  unsigned long total_cycle_time = action_end - loop_start;
+
+  // --- Print Numeric Data (for Serial Plotter) + Mode (for Serial Monitor) ---
+  // Format: Distance,Score,TotalCycleTime Mode
+  Serial.print(distance, 1);
+  Serial.print(",");
+  Serial.print(score, 3);
+  Serial.print(",");
+  Serial.print((float)total_cycle_time / 1000000.0, 6); // Total Cycle Time in Seconds
+  Serial.print(" ");
+  Serial.println(action); // Mode printed after numeric data
+ESP.getFreeHeap();      // Free heap memory
+ESP.getHeapSize() ;     // Total heap size
+ESP.getMaxAllocHeap() ; // Largest allocatable block
+}

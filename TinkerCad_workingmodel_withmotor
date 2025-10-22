@@ -1,0 +1,109 @@
+#include <math.h>
+
+// Pin definitions
+#define TRIG_PIN 8
+#define ECHO_PIN 7
+#define MOTOR_PIN 9  // MOSFET gate connected here
+
+// ---------- Fuzzy Parameters ----------
+float vc_center = 10, vc_steep = 0.3; 
+float c_center  = 40, c_steep  = 0.2;
+float f_center  = 60, f_steep  = 0.15;
+float vf_center = 100, vf_steep = 0.1;
+
+// ---------- Smooth Sigmoid ----------
+float smoothSigmoid(float x, float center, float steepness, bool decreasing) {
+  if (decreasing)
+    return 1.0 / (1.0 + exp(steepness * (x - center)));
+  else
+    return 1.0 / (1.0 + exp(-steepness * (x - center)));
+}
+
+// ---------- Fuzzy Memberships ----------
+void calculateMemberships(float distance, float &vc, float &c, float &f, float &vf) {
+  vc = smoothSigmoid(distance, vc_center, vc_steep, true); 
+  c  = smoothSigmoid(distance, c_center,  c_steep,  true);  
+  f  = smoothSigmoid(distance, f_center,  f_steep,  false); 
+  vf = smoothSigmoid(distance, vf_center, vf_steep, false);
+}
+
+// ---------- Score Calculation ----------
+float calculateScore(float distance) {
+  float vc, c, f, vf;
+  calculateMemberships(distance, vc, c, f, vf);
+
+  float stopInfluence = vc;
+  float slowInfluence = (c * 0.8 + vc * 0.2); 
+  float goInfluence   = (f * 0.4 + vf * 0.6); 
+
+  float total = stopInfluence + slowInfluence + goInfluence;
+  if (total == 0) return 0.5; 
+
+  float baseScore = (stopInfluence * 1.0 + slowInfluence * 0.5 + goInfluence * 0.1) / total;
+  float finalScore = 1.0 / (1.0 + exp(-8 * (baseScore - 0.5)));
+
+  return finalScore;
+}
+
+// ---------- Get Action ----------
+String getAction(float distance, float &score) {
+  score = calculateScore(distance);
+  if (score >= 0.6) return "STOP";
+  else if (score >= 0.3) return "SLOW DOWN";
+  else return "GO";
+}
+
+// ---------- Get Distance ----------
+float getDistance() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000); 
+  if (duration == 0) return 999; 
+  float distance = duration * 0.0343 / 2.0; 
+  return distance;
+}
+
+// ---------- Motor Control ----------
+void setMotorAction(String action) {
+  if (action == "GO") {
+    analogWrite(MOTOR_PIN, 255);   // Full speed
+  } 
+  else if (action == "SLOW DOWN") {
+    analogWrite(MOTOR_PIN, 128);   // Half speed
+  } 
+  else if (action == "STOP") {
+    analogWrite(MOTOR_PIN, 0);     // Stop
+  }
+}
+
+// ---------- Setup ----------
+void setup() {
+  Serial.begin(9600);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  pinMode(MOTOR_PIN, OUTPUT);
+  digitalWrite(MOTOR_PIN, LOW);
+  Serial.println("Fuzzy Distance Motor Control Started");
+}
+
+// ---------- Loop ----------
+void loop() {
+  float distance = getDistance();
+  float score;
+  String action = getAction(distance, score);
+
+  setMotorAction(action);
+
+  Serial.print("Distance: ");
+  Serial.print(distance, 1);
+  Serial.print(" cm\tScore: ");
+  Serial.print(score, 3);
+  Serial.print("\tAction: ");
+  Serial.println(action);
+
+  delay(100);
+}
